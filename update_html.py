@@ -13,9 +13,19 @@ def generate_html():
         comp_df = pd.read_csv("completed_trades.csv")
         # Color code the rows based on status
         def row_color(val):
-            return 'background-color: #d4edda;' if 'Win' in val else 'background-color: #f8d7da;'
-            
-        comp_html = comp_df.style.applymap(lambda x: row_color(x) if isinstance(x, str) and ('Win' in x or 'Loss' in x) else '', subset=['Status']).to_html(classes='table table-striped table-hover', index=False)
+            if not isinstance(val, str):
+                return ''
+            if 'Win' in val:
+                return 'background-color: #d4edda;'
+            if 'Loss' in val:
+                return 'background-color: #f8d7da;'
+            return ''
+
+        comp_html = (
+            comp_df.style
+            .map(lambda x: row_color(x) if isinstance(x, str) and ('Win' in x or 'Loss' in x) else '', subset=['Status'])
+            .to_html(classes='table table-striped table-hover', index=False)
+        )
 
     html_content = f"""
     <!DOCTYPE html>

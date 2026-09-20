@@ -162,7 +162,8 @@ def train():
     print(f"High-Confidence Precision (Win Rate of AI picks): {prec*100:.2f}%")
     
     print("Saving AI Model to 'ai_brain.pkl.gz'...")
-    import gzip; with gzip.open("ai_brain.pkl.gz", "wb") as f:
+    import gzip
+    with gzip.open("ai_brain.pkl.gz", "wb") as f:
         pickle.dump(model, f)
     print("Done!")
 

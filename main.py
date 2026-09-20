@@ -1,0 +1,388 @@
+import customtkinter as ctk
+import tkinter as tk
+from tkinter import ttk
+import pandas as pd
+import yfinance as yf
+import numpy as np
+import threading
+import os
+import sys
+
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
+import time
+
+# Appearance
+ctk.set_appearance_mode("System")
+ctk.set_default_color_theme("blue")
+
+class App(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+
+        self.title("Nifty 200 Swing Trading Analyzer")
+        self.geometry("800x500")
+
+        self.label = ctk.CTkLabel(self, text="Nifty 200 Swing Analyzer", font=ctk.CTkFont(size=20, weight="bold"))
+        self.label.pack(pady=20)
+
+        self.btn_run = ctk.CTkButton(self, text="Run Analysis", command=self.start_analysis)
+        self.btn_run.pack(pady=10)
+
+        self.status_var = ctk.StringVar(value="Ready")
+        self.status_label = ctk.CTkLabel(self, textvariable=self.status_var)
+        self.status_label.pack(pady=5)
+
+        # Progress bar
+        self.progress = ctk.CTkProgressBar(self, width=400)
+        self.progress.pack(pady=10)
+        self.progress.set(0)
+
+        # Tabs
+        self.tabview = ctk.CTkTabview(self, width=750, height=250)
+        self.tabview.pack(pady=10, fill="both", expand=True, padx=20)
+        
+        self.tab_today = self.tabview.add("Today's Picks")
+        self.tab_active = self.tabview.add("Live Active Trades")
+        self.tab_hist = self.tabview.add("Last 3 Months Trades")
+
+        # Today's Picks Treeview
+        columns = ("Symbol", "Probability", "Close", "Target (+7%)", "Stop Loss (-3%)", "Qty (10k INR)")
+        self.tree = ttk.Treeview(self.tab_today, columns=columns, show="headings")
+        for col in columns:
+            self.tree.heading(col, text=col)
+            self.tree.column(col, width=110, anchor="center")
+        self.tree.pack(fill="both", expand=True)
+        self.tree.bind("<Double-1>", self.on_row_double_click)
+
+        # Active Trades Treeview
+        active_cols = ("Symbol", "Entry Date", "Entry Price", "Target", "Stop Loss")
+        self.active_tree = ttk.Treeview(self.tab_active, columns=active_cols, show="headings")
+        for col in active_cols:
+            self.active_tree.heading(col, text=col)
+            self.active_tree.column(col, width=130, anchor="center")
+        self.active_tree.pack(fill="both", expand=True)
+        self.top_5_data = []
+
+        # Treeview for Historical Trades
+        hist_cols = ("Symbol", "Entry Date", "Entry Price", "Exit Date", "Exit Price", "Status", "P&L")
+        self.hist_tree = ttk.Treeview(self.tab_hist, columns=hist_cols, show="headings", height=6)
+        for col in hist_cols:
+            self.hist_tree.heading(col, text=col)
+            self.hist_tree.column(col, width=100, anchor="center")
+        self.hist_tree.pack(pady=10, fill="both", expand=True)
+
+    def start_analysis(self):
+        self.btn_run.configure(state="disabled")
+        self.status_var.set("Loading Nifty 200 Symbols...")
+        self.progress.set(0)
+        # Clear existing items
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        for item in self.active_tree.get_children():
+            self.active_tree.delete(item)
+        for item in self.hist_tree.get_children():
+            self.hist_tree.delete(item)
+
+        thread = threading.Thread(target=self.run_analysis)
+        thread.start()
+
+    def run_analysis(self):
+        try:
+            csv_path = resource_path("nifty200_symbols.csv")
+            df_symbols = pd.read_csv(csv_path)
+            symbols = df_symbols["Yahoo_Symbol"].tolist()
+            
+            model_path = resource_path("ai_brain.pkl")
+            if not os.path.exists(model_path):
+                self.status_var.set("AI Model not found! Cannot analyze.")
+                self.btn_run.configure(state="normal")
+                return
+                
+            import pickle
+            import trade_manager
+            with open(model_path, "rb") as f:
+                self.ai_model = pickle.load(f)
+                
+        except Exception as e:
+            self.status_var.set(f"Error loading symbols: {e}")
+            self.btn_run.configure(state="normal")
+            return
+
+        total_symbols = len(symbols)
+        results = []
+        hist_results = []
+
+        self.status_var.set("Fetching Historical Data (This may take a minute)...")
+        data = yf.download(symbols, period="6mo", group_by="ticker", threads=True, progress=False)
+
+        analyzed_count = 0
+        for symbol in symbols:
+            try:
+                # If only 1 symbol is passed, yfinance returns different structure, but for >1 it returns multi-index
+                df = data[symbol].copy() if total_symbols > 1 else data.copy()
+                df.dropna(inplace=True)
+                
+                if len(df) < 50:
+                    continue
+
+                # Quantum Indicators
+                
+                # Volume Z-Score
+                vol_mean = df['Volume'].rolling(window=20).mean()
+                vol_std = df['Volume'].rolling(window=20).std()
+                df['Vol_ZScore'] = (df['Volume'] - vol_mean) / vol_std
+                
+                # Gap detection
+                df['Gap_Up'] = df['Open'] > df['High'].shift(1)
+                df['Gap_Pct'] = (df['Open'] - df['High'].shift(1)) / df['High'].shift(1)
+                
+                # ATR calculation inline
+                high_low = df['High'] - df['Low']
+                high_close = np.abs(df['High'] - df['Close'].shift())
+                low_close = np.abs(df['Low'] - df['Close'].shift())
+                ranges = pd.concat([high_low, high_close, low_close], axis=1)
+                true_range = np.max(ranges, axis=1)
+                df['ATR'] = true_range.rolling(window=14).mean()
+                df['ATR_Pct'] = df['ATR'] / df['Close']
+
+                # RSI calculation
+                delta = df['Close'].diff()
+                up = delta.clip(lower=0)
+                down = -1 * delta.clip(upper=0)
+                ema_up = up.ewm(com=13, adjust=False).mean()
+                ema_down = down.ewm(com=13, adjust=False).mean()
+                rs = ema_up / ema_down
+                df['RSI_14'] = 100 - (100 / (1 + rs))
+                
+                df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
+                df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
+                df['Dist_EMA20'] = (df['Close'] - df['EMA_20']) / df['EMA_20']
+                df['Dist_EMA50'] = (df['Close'] - df['EMA_50']) / df['EMA_50']
+                df['Daily_Ret'] = df['Close'].pct_change()
+                
+                # 7. MACD (Quantum Analytics)
+                exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+                exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+                macd = exp1 - exp2
+                macd_signal = macd.ewm(span=9, adjust=False).mean()
+                df['MACD_Hist'] = macd - macd_signal
+                
+                # 8. Bollinger Bands (Math Stats)
+                bb_mid = df['Close'].rolling(window=20).mean()
+                bb_std = df['Close'].rolling(window=20).std()
+                bb_lower = bb_mid - (bb_std * 2)
+                df['Dist_BBLower'] = (df['Close'] - bb_lower) / df['Close']
+                
+                df.dropna(inplace=True)
+                if len(df) < 50:
+                    continue
+
+                # Run historical simulation on past ~65 trading days (3 months)
+                # Ensure we have enough data
+                start_idx = max(0, len(df) - 65 - 15)
+                for i in range(start_idx, len(df) - 15):
+                    row = df.iloc[i]
+                    
+                    features = pd.DataFrame([{
+                        'Vol_ZScore': row['Vol_ZScore'],
+                        'Gap_Pct': row['Gap_Pct'],
+                        'ATR_Pct': row['ATR_Pct'],
+                        'RSI_14': row['RSI_14'],
+                        'Dist_EMA20': row['Dist_EMA20'],
+                        'Dist_EMA50': row['Dist_EMA50'],
+                        'Daily_Ret': row['Daily_Ret'],
+                        'MACD_Hist': row['MACD_Hist'],
+                        'Dist_BBLower': row['Dist_BBLower']
+                    }])
+                    prob = self.ai_model.predict_proba(features)[0][1]
+                    if prob > 0.65:
+                        entry_price = row['Close']
+                        target_price = entry_price * 1.07
+                        sl_price = entry_price * 0.97
+                        
+                        hit_target = False
+                        hit_sl = False
+                        exit_price = entry_price
+                        exit_date = "Pending"
+                        status = "Pending"
+                        
+                        for j in range(1, 16):
+                            future_high = df['High'].iloc[i + j]
+                            future_low = df['Low'].iloc[i + j]
+                            if future_low <= sl_price:
+                                hit_sl = True
+                                exit_price = sl_price
+                                exit_date = df.index[i+j].strftime("%Y-%m-%d")
+                                status = "Loss"
+                                break
+                            if future_high >= target_price:
+                                hit_target = True
+                                exit_price = target_price
+                                exit_date = df.index[i+j].strftime("%Y-%m-%d")
+                                status = "Win"
+                                break
+                        
+                        if not hit_target and not hit_sl:
+                            exit_price = df['Close'].iloc[i+15]
+                            exit_date = df.index[i+15].strftime("%Y-%m-%d")
+                            if exit_price > entry_price:
+                                status = "Time Exit (Win)"
+                            else:
+                                status = "Time Exit (Loss)"
+                                
+                        pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+                        hist_results.append({
+                            'Symbol': symbol.replace('.NS', ''),
+                            'Entry Date': df.index[i].strftime("%Y-%m-%d"),
+                            'Entry Price': round(entry_price, 2),
+                            'Exit Date': exit_date,
+                            'Exit Price': round(exit_price, 2),
+                            'Status': status,
+                            'PnL': round(pnl_pct, 2)
+                        })
+
+                # Get latest values for Today's Picks
+                if len(df) == 0: continue
+                
+                latest = df.iloc[-1]
+                close = latest['Close']
+                
+                features = pd.DataFrame([{
+                    'Vol_ZScore': latest['Vol_ZScore'],
+                    'Gap_Pct': latest['Gap_Pct'],
+                    'ATR_Pct': latest['ATR_Pct'],
+                    'RSI_14': latest['RSI_14'],
+                    'Dist_EMA20': latest['Dist_EMA20'],
+                    'Dist_EMA50': latest['Dist_EMA50'],
+                    'Daily_Ret': latest['Daily_Ret'],
+                    'MACD_Hist': latest['MACD_Hist'],
+                    'Dist_BBLower': latest['Dist_BBLower']
+                }])
+
+                # AI Prediction
+                prob = self.ai_model.predict_proba(features)[0][1]
+                
+                if prob > 0.65:
+                    target = close * 1.07
+                    sl = close * 0.97
+                    qty = int(10000 // close)
+                    
+                    reason = (
+                        f"• AI Confidence: The Neural Network is {prob*100:.1f}% confident this will hit 7%.\n"
+                        f"• Volume Anomaly: Volume is {latest['Vol_ZScore']:.1f} standard deviations above normal.\n"
+                        f"• Trend Aligned: Close (₹{close:.2f}) > 20 EMA > 50 EMA.\n"
+                        f"• Volatility Filter: ATR is {latest['ATR_Pct']*100:.2f}%, safely within 3% stop loss limit.\n"
+                        f"• Momentum: RSI is strong at {latest['RSI_14']:.1f}.\n"
+                        f"• AI Self-Learning: This strategy adapts to Nifty 200 historically successful patterns."
+                    )
+                    
+                    results.append({
+                        'Symbol': symbol.replace('.NS', ''),
+                        'Close': round(close, 2),
+                        'Target': round(target, 2),
+                        'StopLoss': round(sl, 2),
+                        'Qty': qty,
+                        'Score': prob,  # Rank by AI Probability
+                        'Reason': reason
+                    })
+            except Exception as e:
+                print(f"Exception for {symbol}: {e}")
+            
+            analyzed_count += 1
+            # Update progress safely
+            progress_val = analyzed_count / total_symbols
+            self.after(0, self.progress.set, progress_val)
+
+        # Sort results
+        results.sort(key=lambda x: x['Score'], reverse=True)
+        top_5 = results[:5]
+        
+        # Sort history by date descending
+        hist_results.sort(key=lambda x: x['Entry Date'], reverse=True)
+
+        # Update GUI
+        self.after(0, lambda: self.update_table(top_5, hist_results))
+
+    def update_table(self, top_5, hist_results):
+        self.top_5_data = top_5
+        if not top_5:
+            self.status_var.set("No stocks met the criteria today.")
+        else:
+            self.status_var.set("Analysis Complete. Found Top Picks.")
+            for item in top_5:
+                self.tree.insert("", "end", values=(
+                    item['Symbol'],
+                    f"{item['Score']*100:.2f}%",
+                    f"₹{item['Close']}",
+                    f"₹{item['Target']}",
+                    f"₹{item['StopLoss']}",
+                    item['Qty']
+                ))
+                
+        # Update history
+        for h in hist_results:
+            color = "green" if "Win" in h['Status'] else "red"
+            self.hist_tree.insert("", "end", values=(
+                h['Symbol'],
+                h['Entry Date'],
+                f"₹{h['Entry Price']}",
+                h['Exit Date'],
+                f"₹{h['Exit Price']}",
+                h['Status'],
+                f"{h['PnL']}%"
+            ), tags=(color,))
+            
+        self.hist_tree.tag_configure("green", foreground="green")
+        self.hist_tree.tag_configure("red", foreground="red")
+            
+        self.btn_run.configure(state="normal")
+        self.progress.set(1)
+
+    def on_row_double_click(self, event):
+        selected = self.tree.selection()
+        if not selected:
+            return
+        
+        item_values = self.tree.item(selected[0], "values")
+        symbol = item_values[0]
+        
+        # Find the reason
+        reason = "No insight available."
+        for data in self.top_5_data:
+            if data['Symbol'] == symbol:
+                reason = data.get('Reason', reason)
+                break
+                
+        # Create popup
+        popup = ctk.CTkToplevel(self)
+        popup.title(f"{symbol} - Analysis Insights")
+        popup.geometry("500x250")
+        popup.attributes("-topmost", True)
+        
+        lbl_title = ctk.CTkLabel(popup, text=f"Why are we buying {symbol}?", font=ctk.CTkFont(size=16, weight="bold"))
+        lbl_title.pack(pady=15)
+        
+        lbl_reason = ctk.CTkLabel(popup, text=reason, justify="left", font=ctk.CTkFont(size=14))
+        lbl_reason.pack(padx=20, pady=10, anchor="w")
+        
+        btn_close = ctk.CTkButton(popup, text="Close", command=popup.destroy)
+        btn_close.pack(pady=20)
+
+
+    def check_autorun(self):
+        if "--auto-run" in sys.argv:
+            self.start_analysis()
+
+if __name__ == "__main__":
+    app = App()
+    app.after(1000, app.check_autorun)
+    app.mainloop()

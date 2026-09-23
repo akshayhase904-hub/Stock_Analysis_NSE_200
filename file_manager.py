@@ -46,7 +46,7 @@ def combine_file(filepath):
     print(f"Successfully restored {filepath}")
 
 def scan_and_split_all(directory='.', chunk_size_mb=20):
-    \"\"\"Scans directory for any file > 20MB and splits it automatically.\"\"\"
+    """Scans directory for any file > 20MB and splits it automatically."""
     chunk_size = chunk_size_mb * 1024 * 1024
     for root, dirs, files in os.walk(directory):
         if '.git' in root: continue
@@ -62,7 +62,7 @@ def scan_and_split_all(directory='.', chunk_size_mb=20):
                 pass
 
 def scan_and_combine_all(directory='.'):
-    \"\"\"Scans directory for any split files (.part0) and combines them automatically.\"\"\"
+    """Scans directory for any split files (.part0) and combines them automatically."""
     for root, dirs, files in os.walk(directory):
         if '.git' in root: continue
         for file in files:

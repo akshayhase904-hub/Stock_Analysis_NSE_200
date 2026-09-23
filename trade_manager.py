@@ -7,9 +7,9 @@ ACTIVE_TRADES_FILE = "active_trades.csv"
 COMPLETED_TRADES_FILE = "completed_trades.csv"
 
 def init_db():
-    if not os.path.exists(ACTIVE_TRADES_FILE):
+    if not os.path.exists(ACTIVE_TRADES_FILE) or os.path.getsize(ACTIVE_TRADES_FILE) < 10:
         pd.DataFrame(columns=['Symbol', 'Entry Date', 'Entry Price', 'Target', 'Stop Loss']).to_csv(ACTIVE_TRADES_FILE, index=False)
-    if not os.path.exists(COMPLETED_TRADES_FILE):
+    if not os.path.exists(COMPLETED_TRADES_FILE) or os.path.getsize(COMPLETED_TRADES_FILE) < 10:
         pd.DataFrame(columns=['Symbol', 'Entry Date', 'Entry Price', 'Exit Date', 'Exit Price', 'Status', 'PnL']).to_csv(COMPLETED_TRADES_FILE, index=False)
 
 def update_active_trades():

@@ -49,6 +49,12 @@ def run_headless_scan():
         return
 
     try:
+        import file_manager
+        file_manager.combine_file("ai_brain.pkl.gz")
+    except Exception as e:
+        print(f"File combining failed: {e}")
+        
+    try:
         import gzip
         with gzip.open("ai_brain.pkl.gz", "rb") as f:
             ai_model = pickle.load(f)

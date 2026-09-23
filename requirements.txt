@@ -1,2 +1,5 @@
-
-twilio
+﻿pandas
+yfinance
+numpy
+scikit-learn
+requests

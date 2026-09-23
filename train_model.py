@@ -165,6 +165,13 @@ def train():
     import gzip
     with gzip.open("ai_brain.pkl.gz", "wb") as f:
         pickle.dump(model, f)
+        
+    try:
+        import file_manager
+        file_manager.split_file("ai_brain.pkl.gz", chunk_size_mb=20)
+    except Exception as e:
+        print(f"File splitting failed: {e}")
+        
     print("Done!")
 
 if __name__ == "__main__":

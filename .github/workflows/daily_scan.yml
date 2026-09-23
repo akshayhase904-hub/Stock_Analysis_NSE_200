@@ -2,8 +2,8 @@ name: Daily AI Scan & Telegram Notify
 
 on:
   schedule:
-    # Run at 9:30 AM IST (04:00 UTC) Monday-Friday
-    - cron: '0 4 * * 1-5'
+    # Run at 3:00 PM IST (09:30 UTC) daily
+    - cron: '30 9 * * *'
   workflow_dispatch: # Allows manual run
 
 permissions:
@@ -37,11 +37,12 @@ jobs:
         run: |
           python headless_scanner.py
           python update_html.py
+          python -c "import file_manager; file_manager.scan_and_split_all()"
 
       - name: Commit and Push Updates
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add active_trades.csv completed_trades.csv index.html ai_brain.pkl.gz || echo "No files found"
+          git add active_trades.csv completed_trades.csv index.html *.part* || echo "No files found"
           git commit -m "Automated Daily Database & Model Update [skip ci]" || echo "No changes to commit"
           git push
